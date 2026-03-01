@@ -1,0 +1,8 @@
+{
+  // 強制指定此資料夾專用的 Python 直譯器路徑
+  // 請確認您的虛擬環境資料夾名稱是 venv 還是 .venv，並相應修改下方路徑
+  "python.defaultInterpreterPath": ".\\.venv\\Scripts\\python.exe",
+
+  // 開啟終端機時自動啟動該環境
+  "python.terminal.activateEnvironment": true
+}
