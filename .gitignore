@@ -1,5 +1,22 @@
-# .gitignore
+#
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
 .numba_cache/
-output/
+
+#
+venv/
+.env
+
+#
+.vscode/
+.idea/
+
+#
+output/*
+!output/.gitkeep
+
+#
+.DS_Store
+Thumbs.db
