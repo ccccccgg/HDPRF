@@ -136,7 +136,8 @@ def read_primes(file_path: Path) -> List[int]:
     try:
         with open(file_path, "r", encoding='utf-8') as file:
             primes = [int(line.strip()) for line in file if line.strip().isdigit()]
-        if not primes: raise ValueError("Prime file is empty")
+        if not primes: 
+            raise ValueError("Prime file is empty")
         return primes
     except FileNotFoundError:
         raise FileNotFoundError(f"Prime file not found: {file_path}. Please ensure it exists in the 'data/' directory.")
@@ -144,16 +145,22 @@ def read_primes(file_path: Path) -> List[int]:
         raise Exception(f"Error reading prime file: {e}")
     
 def get_extractor(name: str):
-    if name == "sha256": return hashlib.sha256
-    elif name == "sha512": return hashlib.sha512
-    elif name == "blake2b": return hashlib.blake2b
-    elif name in ["none", None]: return None
+    if name == "sha256": 
+        return hashlib.sha256
+    elif name == "sha512": 
+        return hashlib.sha512
+    elif name == "blake2b": 
+        return hashlib.blake2b
+    elif name in ["none", None]: 
+        return None
     else: raise ValueError(f"Unsupported Extractor: {name}")
 
 def generate_prime_combinations(primes: List[int], num_variables: int, total_groups: int) -> List[List[int]]:
     if num_variables > len(primes):
         num_variables = len(primes)
-    if num_variables <= 0: return [[]] * total_groups
+    if num_variables <= 0: 
+        return [[]] * total_groups
+    
     return [random.sample(primes, num_variables) for _ in range(total_groups)]
 
 def compute_polynomial_values(prime_combinations: List[List[int]], f1_config: Dict[str, Any], extractor_name: str) -> List[int]:
@@ -175,18 +182,21 @@ def compute_polynomial_values(prime_combinations: List[List[int]], f1_config: Di
             polynomial_values_raw.append(0.0)
 
     extractor = get_extractor(extractor_name)
-    if not extractor: return polynomial_values_raw
+    if not extractor: 
+        return polynomial_values_raw
 
     extracted_values = []
     for val in polynomial_values_raw:
         digest = extractor(repr(val).encode('utf-8')).digest()
         if len(digest) < 8: digest = digest.ljust(8, b'\x00')
         extracted_values.append(int.from_bytes(digest[:8], 'big'))
+        
     return extracted_values
 
 def generate_initial_state_matrix(initial_entropy_seeds: List[int], length: int) -> List[np.ndarray]:
     input_array = np.array(initial_entropy_seeds, dtype=np.uint64)
     state_array = numba_core_uint8(input_array, length)
+    
     return [row for row in state_array]
 
 # ==============================================================================
@@ -197,6 +207,7 @@ def generate_initial_state_matrix(initial_entropy_seeds: List[int], length: int)
 def numba_core_uint8(input_array, length):
     num_values = input_array.shape[0]
     output_array = np.zeros((num_values, length), dtype=np.uint8)
+    
     for i in prange(num_values):
         current_val = input_array[i] 
         for j in range(length):
@@ -206,6 +217,7 @@ def numba_core_uint8(input_array, length):
             z = (z ^ (z >> 27)) * np.uint64(0x94d049bb133111eb)
             current_val = z ^ (z >> 31)
             output_array[i, j] = np.uint8(current_val & 0xFF)
+            
     return output_array
 
 @jit(uint8[:](int64, int64, uint8[:,:], int64[:], uint8[:,:], int64[:], int64[:], int64[:], int64, uint64), nopython=True, parallel=True, cache=True)
@@ -262,6 +274,7 @@ def numba_generate_digits_core(iterations_needed, D, fixed_axis_source_array, ax
                 z_s = (z_s ^ (z_s >> 30)) * np.uint64(0xbf58476d1ce4e5b9)
                 z_s = (z_s ^ (z_s >> 27)) * np.uint64(0x94d049bb133111eb)
                 rng_val_seed = z_s ^ (z_s >> 31)
+                
                 target_seed_block = rng_val_seed % num_blocks_seed
                 seed_final_idx = target_seed_block * 256 + step_in_block
                 seed_val = fixed_seed_source_array[seed_source_idx, seed_final_idx]
@@ -281,35 +294,42 @@ def numba_generate_bytes_from_digits(s1_values_np, state_counter, buffer_size, n
     num_bytes = len(s1_values_np) 
     output_bytes = np.zeros(num_bytes, dtype=np.uint8)
     
-    chunk_size = (num_bytes + num_threads - 1) // num_threads
-    BUFFER_SIZE = buffer_size
-
-    for i in prange(num_threads):
-        start = i * chunk_size
-        end = min((i + 1) * chunk_size, num_bytes)
-        if start >= end: continue
-        internal_state = np.uint64(state_counter) ^ np.uint64(i + 1)
+    LOGICAL_CHUNK_SIZE = 65536
+    num_logical_chunks = (num_bytes + LOGICAL_CHUNK_SIZE - 1) // LOGICAL_CHUNK_SIZE
+    
+    for chunk_idx in prange(num_logical_chunks):
+        start = chunk_idx * LOGICAL_CHUNK_SIZE
+        end = min((chunk_idx + 1) * LOGICAL_CHUNK_SIZE, num_bytes)
+        
+        internal_state = np.uint64(state_counter) ^ np.uint64(chunk_idx + 1)
+        
         STATE_MASK = np.uint64(0xFFFFFFFFFFFFFFFF)
         MIX_CONST_A = np.uint64(1103515245)
         MIX_CONST_B = np.uint64(15287)
-        state_buffer = np.zeros(BUFFER_SIZE, dtype=np.uint64)
-        for k in range(BUFFER_SIZE):
+        state_buffer = np.zeros(buffer_size, dtype=np.uint64)
+        
+        for k in range(buffer_size):
             internal_state = (internal_state * MIX_CONST_A + MIX_CONST_B) & STATE_MASK
             state_buffer[k] = internal_state
+            
         for byte_idx in range(start, end):
             val_from_core = s1_values_np[byte_idx]
-            buffer_write_idx = byte_idx % BUFFER_SIZE
+            buffer_write_idx = byte_idx % buffer_size
             internal_state = (internal_state * MIX_CONST_A + np.uint64(val_from_core) + MIX_CONST_B) & STATE_MASK
             state_buffer[buffer_write_idx] = internal_state
             mixed_scalar = state_buffer[0]
-            for k in range(1, BUFFER_SIZE):
+            
+            for k in range(1, buffer_size):
                 mixed_scalar = mixed_scalar ^ state_buffer[k]
+                
             x = mixed_scalar
             x = x ^ (x >> 33); x = (x * np.uint64(0xff51afd7ed558ccd)) & STATE_MASK
             x = x ^ (x >> 33); x = (x * np.uint64(0xc4ceb9fe1a85ec53)) & STATE_MASK
             x = x ^ (x >> 33)
+            
             output_byte_extracted = (x >> 56) & 0xFF
             output_bytes[byte_idx] = np.uint8(output_byte_extracted ^ val_from_core)
+            
     return output_bytes
 
 def generate_byte_stream(state_matrix: List[np.ndarray], dimension: int, f_config: Dict[str, Any], num_seeds: int, target_length: int, buffer_size: int) -> Generator[bytes, None, None]:
@@ -390,11 +410,13 @@ def execute_pipeline(config_path: Path, project_root: Path):
             
             # 1. Try relative to Project Root (Standard structure)
             p1 = project_root / path_str
-            if p1.exists(): return p1
+            if p1.exists(): 
+                return p1
             
             # 2. Try relative to Script Directory (Local structure)
             p2 = script_dir / Path(path_str).name
-            if p2.exists(): return p2
+            if p2.exists(): 
+                return p2
             
             # 3. Return p1 as default to show expected path in errors
             return p1
