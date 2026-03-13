@@ -1,18 +1,5 @@
 """
-Project: High-Dimensional Polynomial Randomness Framework (HDPRF)
-File: src/main.py
-Type: Open Source Release
-Version: 1.5.5 (GitHub Ready / English Localization)
-Description:
-    Core execution script for the HDPRF.
-    Refactored for portability, CLI execution, and semantic variable naming.
-    
-    Change Log:
-    1. Algorithm Logic Fix: Introduced global_offset to prevent systemic replay.
-    2. JIT Optimization: Eliminated dynamic array allocation inside kernels.
-    3. Path Portability: Adaptive path resolution for standard repo layouts.
-    4. Entropy Feature: Integrated OS-level fallback and external entropy injection.
-    5. Localization: Fully translated comments and logs to English.
+
 """
 
 import io
@@ -177,7 +164,7 @@ def compute_polynomial_values(prime_combinations: List[List[int]], f1_config: Di
             val = constant
             for c, p, v in zip(coeffs, powers, combination):
                 val += c * (v ** p)
-            polynomial_values_raw.append(float(val))
+            polynomial_values_raw.append(int(val))
         except Exception:
             polynomial_values_raw.append(0.0)
 
@@ -187,7 +174,7 @@ def compute_polynomial_values(prime_combinations: List[List[int]], f1_config: Di
 
     extracted_values = []
     for val in polynomial_values_raw:
-        digest = extractor(repr(val).encode('utf-8')).digest()
+        digest =  extractor(val.to_bytes((val.bit_length() + 7) // 8, 'big')).digest()
         if len(digest) < 8: digest = digest.ljust(8, b'\x00')
         extracted_values.append(int.from_bytes(digest[:8], 'big'))
         
@@ -289,23 +276,25 @@ def numba_generate_digits_core(iterations_needed, D, fixed_axis_source_array, ax
             
     return output_values
 
-@jit(uint8[:](uint8[:], uint64, int64, int64), nopython=True, parallel=True, cache=True)
-def numba_generate_bytes_from_digits(s1_values_np, state_counter, buffer_size, num_threads):
+@jit(uint8[:](uint8[:], uint64, int64), nopython=True, parallel=True, cache=True)
+def numba_generate_bytes_from_digits(s1_values_np, state_counter, buffer_size):
     num_bytes = len(s1_values_np) 
     output_bytes = np.zeros(num_bytes, dtype=np.uint8)
     
     LOGICAL_CHUNK_SIZE = 65536
     num_logical_chunks = (num_bytes + LOGICAL_CHUNK_SIZE - 1) // LOGICAL_CHUNK_SIZE
     
+    WEYL_CONST = np.uint64(0x9e3779b97f4a7c15)
+    STATE_MASK = np.uint64(0xFFFFFFFFFFFFFFFF)
+    MIX_CONST_A = np.uint64(1103515245)
+    MIX_CONST_B = np.uint64(15287)
+        
+        
     for chunk_idx in prange(num_logical_chunks):
         start = chunk_idx * LOGICAL_CHUNK_SIZE
         end = min((chunk_idx + 1) * LOGICAL_CHUNK_SIZE, num_bytes)
         
         internal_state = np.uint64(state_counter) ^ np.uint64(chunk_idx + 1)
-        
-        STATE_MASK = np.uint64(0xFFFFFFFFFFFFFFFF)
-        MIX_CONST_A = np.uint64(1103515245)
-        MIX_CONST_B = np.uint64(15287)
         state_buffer = np.zeros(buffer_size, dtype=np.uint64)
         
         for k in range(buffer_size):
@@ -314,11 +303,13 @@ def numba_generate_bytes_from_digits(s1_values_np, state_counter, buffer_size, n
             
         for byte_idx in range(start, end):
             val_from_core = s1_values_np[byte_idx]
-            buffer_write_idx = byte_idx % buffer_size
-            internal_state = (internal_state * MIX_CONST_A + np.uint64(val_from_core) + MIX_CONST_B) & STATE_MASK
-            state_buffer[buffer_write_idx] = internal_state
-            mixed_scalar = state_buffer[0]
+            diffused_val = np.uint64(val_from_core) * WEYL_CONST
+            internal_state = (internal_state * MIX_CONST_A + diffused_val + MIX_CONST_B) & STATE_MASK
             
+            buffer_write_idx = byte_idx % buffer_size 
+            state_buffer[buffer_write_idx] = internal_state
+            
+            mixed_scalar = state_buffer[0]
             for k in range(1, buffer_size):
                 mixed_scalar = mixed_scalar ^ state_buffer[k]
                 
@@ -366,7 +357,7 @@ def generate_byte_stream(state_matrix: List[np.ndarray], dimension: int, f_confi
             f_coeffs_np, f_powers_np, f_constant, np.uint64(total_bytes_generated)
         )
         
-        final_bytes_chunk = numba_generate_bytes_from_digits(s_values_chunk, np.uint64(chunk_counter), buffer_size, num_threads)
+        final_bytes_chunk = numba_generate_bytes_from_digits(s_values_chunk, np.uint64(chunk_counter), buffer_size)
         bytes_to_yield = final_bytes_chunk.tobytes()
         
         remaining_bytes = total_target_length - total_bytes_generated
@@ -502,7 +493,7 @@ def main():
     project_root = src_dir.parent
     
     # Default config path
-    default_config_path = project_root / "Main Processing" / "Config.json"
+    default_config_path = project_root / "configs" / "default_config.json"
     
     parser = argparse.ArgumentParser(description="High-Dimensional Polynomial Randomness Framework (HDPRF)")
     parser.add_argument("-c", "--config", type=str, default=str(default_config_path), 
